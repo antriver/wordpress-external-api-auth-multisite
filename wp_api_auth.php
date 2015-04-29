@@ -311,13 +311,6 @@ function wp_api_auth_get_response($username, $password)
     return $return;
 }
 
-
-//gives warning for login - where to get "source" login
-function wp_api_auth_warning()
-{
-    echo '<p class="message">' . get_site_option('wp_api_auth_error_message') . '</p>';
-}
-
 /**
  * Displays informational message on login form
  */
@@ -326,12 +319,9 @@ function wp_api_auth_show_login_message()
     echo '<p class="message">' . get_site_option('wp_api_auth_login_message') . '</p>';
 }
 
-//hopefully grays stuff out.
-/*function wp_api_auth_warning()
-{
-    echo '<strong style="color:red;">Any changes made below WILL NOT be preserved when you login again. You have to change your personal information per instructions found @ <a href="' . get_site_option('wp_api_auth_site_url') . '">login box</a>.</strong>';
-}*/
-
+/**
+ * Display errors on the login page
+ */
 function wp_api_auth_errors()
 {
     global $wp_api_auth_error;
@@ -340,14 +330,13 @@ function wp_api_auth_errors()
     }
 }
 
-
-
-//disables the (useless) password reset option in WP when this plugin is enabled.
+/**
+ * Disables the (now useless) password reset option in WP when this plugin is enabled.
+ */
 function wp_api_auth_show_password_fields()
 {
-    return 0;
+    return false;
 }
-
 
 /*
  * Disable functions.  Idea taken from http auth plugin.
@@ -376,15 +365,22 @@ function wp_auth_api_disable_function()
 
 add_action('admin_init', 'wp_api_auth_init');
 add_action('network_admin_menu', 'wp_api_auth_add_menu');
+
+// On login
 add_action('wp_authenticate', 'wp_api_auth_check_login', 1, 2);
+add_filter('login_message', 'wp_api_auth_show_login_message');
+add_filter('login_errors', 'wp_api_auth_errors');
+
+
+// Disable default registration / forgotten password functions
 add_action('lost_password', 'wp_auth_api_disable_function');
-add_action('user_register', 'wp_auth_api_disable_function');
-add_action('register_form', 'wp_auth_api_disable_function_register');
 add_action('retrieve_password', 'wp_auth_api_disable_function');
 add_action('password_reset', 'wp_auth_api_disable_function');
-add_action('profile_personal_options', 'wp_api_auth_warning');
-add_filter('login_errors', 'wp_api_auth_errors');
+add_action('user_register', 'wp_auth_api_disable_function');
+add_action('register_form', 'wp_auth_api_disable_function_register');
+
+add_action('profile_personal_options', 'wp_api_auth_show_login_message');
 add_filter('show_password_fields', 'wp_api_auth_show_password_fields');
-add_filter('login_message', 'wp_api_auth_show_login_message');
+
 
 register_activation_hook(__FILE__, 'wp_api_auth_activate');
