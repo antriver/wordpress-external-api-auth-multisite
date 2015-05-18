@@ -28,10 +28,11 @@ function wp_api_auth_get_options()
         'wp_api_auth_jabber_field' => '',
 
         'wp_api_auth_login_message' => '',
+        'wp_api_auth_lost_password_message' => '',
     );
 }
 
-function wp_api_auth_init()
+function wp_api_auth_admin_init()
 {
     $options = wp_api_auth_get_options();
     foreach ($options as $key => $defaultValue) {
@@ -42,7 +43,7 @@ function wp_api_auth_init()
 /**
  * Add link to the settings page to the nework admin menu
  */
-function wp_api_auth_add_menu()
+function wp_api_auth_network_admin_menu()
 {
     add_submenu_page(
         'settings.php', // parent_slug
@@ -173,6 +174,13 @@ function wp_api_auth_display_options()
                         <p class="description"><?php _e('Shows on the login form. e.g. To tell users where to create an account. You can use HTML in this text.'); ?></p>
                     </tr>
                 </tr>
+                <tr valign="top">
+                    <th scope="row"><?php _e('Lost Password Form Message'); ?></th>
+                    <td>
+                        <textarea class="large-text" rows="5" name="wp_api_auth_lost_password_message"><?php echo htmlspecialchars(get_site_option('wp_api_auth_lost_password_message'));?></textarea>
+                        <p class="description"><?php _e('Shows on the forgotten password page. If you enter something in this box the reset password form is disabled and this message is shown.'); ?></p>
+                    </tr>
+                </tr>
             </table>
 
             <p class="submit">
@@ -187,25 +195,23 @@ function wp_api_auth_display_options()
 // actual meat of plugin - essentially, you're setting $username and $password to pass on to the system.
 // You check from your external system and insert/update users into the WP system just before WP actually
 // authenticates with its own database.
-function wp_api_auth_check_login($username, $password)
+function wp_api_auth_wp_authenticate($username, $password)
 {
+    //var_dump($username, $password);
+
     require_once './wp-includes/user.php';
     require_once './wp-includes/pluggable.php';
 
     $response = wp_api_auth_get_response($username, $password);
 
     if ($response->success) {
-
         $externalUser = $response->user;
-
     } else {
-
         if ($response->error) {
             global $wp_api_auth_error;
             $wp_api_auth_error = $response->error;
-            return false;
+            return;
         }
-
     }
 
     // Set the mapping of fields from the external db to the wordpress db
@@ -228,7 +234,7 @@ function wp_api_auth_check_login($username, $password)
         'last_name' => !empty($fieldMappings['last_name']) ? $externalUser->{$fieldMappings['last_name']} : '',
         'user_url' => !empty($fieldMappings['user_url']) ? $externalUser->{$fieldMappings['user_url']} : '',
         'user_email' => !empty($fieldMappings['user_email']) ? $externalUser->{$fieldMappings['user_email']} : '',
-        'description' => !empty($fieldMappings['user_email']) ? $externalUser->{$fieldMappings['description']} : '',
+        'description' => !empty($fieldMappings['description']) ? $externalUser->{$fieldMappings['description']} : '',
         'aim' => !empty($fieldMappings['aim']) ? $externalUser->{$fieldMappings['aim']} : '',
         'yim' => !empty($fieldMappings['yim']) ? $externalUser->{$fieldMappings['yim']} : '',
         'jabber' => !empty($fieldMappings['jabber']) ? $externalUser->{$fieldMappings['jabber']} : '',
@@ -248,12 +254,20 @@ function wp_api_auth_check_login($username, $password)
         wp_update_user($wordpressUser);
     } else {
         // Otherwise create a new user
-        wp_insert_user($wordpressUser);
+        $id = wp_insert_user($wordpressUser);
     }
+
+    return new WP_User($id);
+
+    //return $wordpressUser;
 }
 
 function wp_api_auth_get_response($username, $password)
 {
+    if (!$username || !$password) {
+        return false;
+    }
+
     $url = get_site_option('wp_api_auth_url');
     $method = get_site_option('wp_api_auth_method');
     $post = $method === 'POST'; // otherwise GET
@@ -279,6 +293,10 @@ function wp_api_auth_get_response($username, $password)
 
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+
+    // Makes self-signed certificates work
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
 
     $response = curl_exec($ch);
     $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -314,24 +332,44 @@ function wp_api_auth_get_response($username, $password)
 /**
  * Displays informational message on login form
  */
-function wp_api_auth_show_login_message()
+function wp_api_auth_login_message($message)
 {
-    echo '<p class="message">' . get_site_option('wp_api_auth_login_message') . '</p>';
+    if ($message = get_site_option('wp_api_auth_login_message')) {
+        echo '<p class="message">' . $message . '</p>';
+    } elseif ($message) {
+        echo '<p class="message">' . $message . '</p>';
+    }
 }
+
+function wp_auth_api_lost_password()
+{
+    if ($message = get_site_option('wp_api_auth_lost_password_message')) {
+        $errors = new WP_Error();
+        $errors->add('registerdisabled', $message);
+        login_header(__('Log In'), '', $errors);
+        ?>
+        <p id="backtoblog"><a href="<?php bloginfo('url'); ?>/" title="<?php _e('Are you lost?') ?>"><?php printf(__('&larr; Back to %s'), get_bloginfo('title', 'display')); ?></a></p>
+        <?php
+        exit();
+    }
+}
+
 
 /**
  * Display errors on the login page
  */
-function wp_api_auth_errors()
+function wp_api_auth_login_errors($errors)
 {
     global $wp_api_auth_error;
     if ($wp_api_auth_error) {
         return $wp_api_auth_error;
+    } elseif ($errors) {
+        return $errors;
     }
 }
 
 /**
- * Disables the (now useless) password reset option in WP when this plugin is enabled.
+ * Disables the password reset option in wp-admin/profile.php
  */
 function wp_api_auth_show_password_fields()
 {
@@ -362,25 +400,48 @@ function wp_auth_api_disable_function()
     exit();
 }
 
+/**
+ * There doesn't seen to be a way to disable editing name fields,
+ * so just hide them instead.
+ */
+function wp_auth_api_profile_personal_options()
+{
+    ?>
+    <script>
+    jQuery(function($){
+        $('tr.user-first-name-wrap').hide();
+        $('tr.user-last-name-wrap').hide();
 
-add_action('admin_init', 'wp_api_auth_init');
-add_action('network_admin_menu', 'wp_api_auth_add_menu');
+        $('h3:contains("Contact Info")').hide();
+        $('tr.user-email-wrap').closest('table').hide();
+
+        $('tr.user-description-wrap').hide();
+    });
+    </script>
+    <?php
+}
+
+// Add settings page
+add_action('admin_init', 'wp_api_auth_admin_init');
+add_action('network_admin_menu', 'wp_api_auth_network_admin_menu');
 
 // On login
-add_action('wp_authenticate', 'wp_api_auth_check_login', 1, 2);
-add_filter('login_message', 'wp_api_auth_show_login_message');
-add_filter('login_errors', 'wp_api_auth_errors');
+add_action('wp_authenticate', 'wp_api_auth_wp_authenticate', 1, 2);
 
+// Login form
+add_filter('login_message', 'wp_api_auth_login_message');
+add_filter('login_errors', 'wp_api_auth_login_errors');
 
-// Disable default registration / forgotten password functions
-add_action('lost_password', 'wp_auth_api_disable_function');
-add_action('retrieve_password', 'wp_auth_api_disable_function');
-add_action('password_reset', 'wp_auth_api_disable_function');
-add_action('user_register', 'wp_auth_api_disable_function');
-add_action('register_form', 'wp_auth_api_disable_function_register');
+// Lost password frorm
+add_action('lost_password', 'wp_auth_api_lost_password');
 
-add_action('profile_personal_options', 'wp_api_auth_show_login_message');
+// Disable changing passwords
 add_filter('show_password_fields', 'wp_api_auth_show_password_fields');
 
+add_action('retrieve_password', 'wp_auth_api_disable_function');
+add_action('password_reset', 'wp_auth_api_disable_function');
+add_action('register_form', 'wp_auth_api_disable_function_register');
+
+add_action('profile_personal_options', 'wp_auth_api_profile_personal_options');
 
 register_activation_hook(__FILE__, 'wp_api_auth_activate');
